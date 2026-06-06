@@ -1,0 +1,49 @@
+# Weave Guardrails — starter pack.
+# A library of common architecture invariants. Copy the ones you want into your
+# own weave.guardrails.yaml and set `scope`. Tag-based groups assume you tag
+# resources (env=prod, tier=web, data=sensitive); adjust selectors to your tags.
+
+version: 1
+
+scope:
+  accounts: []          # fill in your 12-digit account id(s)
+  regions: []           # empty = all regions
+
+groups:
+  internet:    { pseudo: internet }
+  prod_db:     { type: [RdsInstance], tag: "env=prod" }
+  sensitive:   { tag: "data=sensitive" }
+  web_tier:    { tag: "tier=web" }
+  data_tier:   { tag: "tier=data" }
+  nat:         { type: NatGateway }
+
+invariants:
+  - id: no-world-open-admin-ports
+    description: No security group may expose SSH/RDP/DB ports to the internet.
+    severity: critical
+    not_ingress: { select: { type: SecurityGroup }, ports: [22, 3389, 3306, 5432], from: "0.0.0.0/0" }
+
+  - id: database-not-internet-reachable
+    description: Databases must not be reachable from the internet.
+    severity: critical
+    not_path: { from: internet, to: prod_db }
+
+  - id: sensitive-not-internet-reachable
+    description: Sensitive workloads must not be reachable from the internet.
+    severity: critical
+    not_path: { from: internet, to: sensitive }
+
+  - id: tier-isolation-web-to-data
+    description: The web tier must not reach the data tier directly.
+    severity: high
+    not_path: { from: web_tier, to: data_tier }
+
+  - id: egress-only-via-nat
+    description: Instance egress to the internet must traverse a NAT gateway.
+    severity: high
+    only_via: { from: { type: Instance }, to: internet, through: nat }
+
+  - id: no-cross-account-shared-tgw
+    description: A VPC must not attach to a transit gateway shared with other accounts.
+    severity: high
+    no_shared_tgw: { select: { type: Vpc } }

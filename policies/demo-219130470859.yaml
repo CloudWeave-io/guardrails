@@ -1,0 +1,38 @@
+# Demo policy for the live CloudWeave demo account (cross-dev).
+# Exercises every predicate kind against real data.
+
+version: 1
+
+scope:
+  accounts: ["219130470859"]
+  regions: ["us-east-1"]
+
+groups:
+  internet:  { pseudo: internet }
+  sensitive: { type: [LambdaFunction, Instance], name_matches: "*exfil*|*data*|*vuln*" }
+
+invariants:
+  - id: no-world-open-admin-ports
+    description: No security group may expose SSH/RDP/DB ports to the internet.
+    severity: critical
+    not_ingress: { select: { type: SecurityGroup }, ports: [22, 3389, 3306, 5432], from: "0.0.0.0/0" }
+
+  - id: sensitive-not-internet-reachable
+    description: Sensitive workloads must not be inbound-reachable from the internet.
+    severity: critical
+    not_path: { from: internet, to: sensitive }
+
+  - id: sensitive-not-in-public-subnet
+    description: Sensitive workloads must not sit in an internet-routed (public) subnet.
+    severity: critical
+    not_in_public_subnet: { select: sensitive }
+
+  - id: egress-only-via-nat
+    description: Instance egress to the internet must traverse a NAT gateway.
+    severity: high
+    only_via: { from: { type: Instance }, to: internet, through: { type: NatGateway } }
+
+  - id: no-cross-account-shared-tgw
+    description: A VPC must not attach to a transit gateway shared with other accounts.
+    severity: high
+    no_shared_tgw: { select: { type: Vpc } }
