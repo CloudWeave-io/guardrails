@@ -180,6 +180,20 @@ def _vpc_uid_for(g: Graph, vpc_id: str | None) -> str | None:
     return None
 
 
+def subgraph_for_accounts(g: Graph, accounts: set[str]) -> Graph:
+    """A new Graph with only nodes owned by `accounts` (and edges among them),
+    indexes rebuilt. Used for per-rule account scope: a rule evaluates in true
+    isolation against its own accounts — reachability included — rather than against
+    the merged multi-account graph with a post-hoc filter.
+    """
+    sub = Graph()
+    sub.nodes = {uid: n for uid, n in g.nodes.items() if n.account in accounts}
+    keep = set(sub.nodes)
+    sub.edges = [(s, d, r) for (s, d, r) in g.edges if s in keep and d in keep]
+    build_indexes(sub)
+    return sub
+
+
 def sg_admits(graph: Graph, dst_uid: str, src_uid: str | None) -> bool:
     """Does any security group on `dst` admit inbound traffic from `src`?
 

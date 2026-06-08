@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from cw_guardrails.graph import Graph
+from cw_guardrails.graph import Graph, subgraph_for_accounts
 from cw_guardrails.models import GuardrailReport, InvariantResult, Status, Violation
 from cw_guardrails.policy import Policy, Waiver
 from cw_guardrails.predicates import EVALUATORS, EvalContext
@@ -17,10 +17,24 @@ def evaluate_policy(
     ctx = EvalContext(groups=policy.groups, driver=driver, account_id=account_id)
     results: list[InvariantResult] = []
 
+    # Per-rule account scope: each rule with `accounts:` evaluates against an isolated
+    # subgraph of just those accounts (cached by account-set), so it runs only against
+    # its own scope — reachability included — never the merged multi-account graph.
+    subgraphs: dict[frozenset[str], Graph] = {}
+
+    def graph_for(inv: object) -> Graph:
+        accts = getattr(inv, "accounts", [])
+        if not accts:
+            return graph
+        key = frozenset(accts)
+        if key not in subgraphs:
+            subgraphs[key] = subgraph_for_accounts(graph, set(accts))
+        return subgraphs[key]
+
     for inv in policy.invariants:
         kind = inv.predicate_kind
         try:
-            violations = EVALUATORS[kind](inv, graph, ctx)
+            violations = EVALUATORS[kind](inv, graph_for(inv), ctx)
         except Exception as exc:  # a bad predicate must not crash the whole run
             results.append(
                 InvariantResult(

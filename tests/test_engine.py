@@ -59,6 +59,29 @@ waivers:
     assert r.status == Status.FAIL  # expired waiver does not suppress
 
 
+def test_per_rule_account_scope(graph):
+    # web (the public instance) is in account 111111111111. A rule scoped to that
+    # account flags it; a rule scoped to a different account does not — and the two
+    # rules don't affect each other.
+    policy = """
+version: 1
+scope: { accounts: ["111111111111"] }
+invariants:
+  - id: in-scope
+    severity: critical
+    accounts: ["111111111111"]
+    not_public: { select: { type: Instance } }
+  - id: other-account
+    severity: critical
+    accounts: ["222222222222"]
+    not_public: { select: { type: Instance } }
+"""
+    report = evaluate_policy(load_policy(policy), graph)
+    by_id = {r.id: r for r in report.results}
+    assert by_id["in-scope"].status == Status.FAIL
+    assert by_id["other-account"].status == Status.PASS
+
+
 def test_renderers(graph):
     import json
 

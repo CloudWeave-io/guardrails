@@ -102,6 +102,10 @@ class Invariant(BaseModel):
     id: str
     description: str = ""
     severity: Severity = Severity.MEDIUM
+    # Per-rule account scope: this rule only flags resources owned by these accounts.
+    # Empty = every account in the fetched graph. Must be a subset of the accounts the
+    # policy/run fetches (see scope.accounts / entry.py).
+    accounts: list[str] = Field(default_factory=list)
 
     not_ingress: NotIngress | None = None
     not_public: SelectOnly | None = None
