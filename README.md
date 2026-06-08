@@ -7,6 +7,11 @@ never reach the database", "dev must never reach prod", "no world-open SSH"* —
 Guardrails checks them against the real, scanned cloud (and, later, against a
 Terraform plan in CI before it merges).
 
+> 📖 **Full documentation:** [`docs/guardrails.md`](docs/guardrails.md) — concepts,
+> CLI, library, platform integration (backend + 🚦 frontend tab), the reachability
+> model, and engine internals. Policy language reference:
+> [`docs/policy-reference.md`](docs/policy-reference.md).
+
 ## How it works
 
 ```
