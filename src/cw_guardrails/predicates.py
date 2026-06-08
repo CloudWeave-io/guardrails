@@ -34,13 +34,21 @@ def _name(graph: Graph, uid: str) -> str:
     return graph.nodes[uid].name if uid in graph.nodes else uid
 
 
+def _resolve_nodes(selector: object, graph: Graph, groups: dict) -> set[str]:
+    """Resolve a `select` to real graph-node uids, dropping the INTERNET sentinel and
+    any phantom id. Posture predicates index graph.nodes directly, so a misconfigured
+    rule (e.g. not_ingress with select: internet) must not KeyError — it just selects
+    nothing."""
+    return {u for u in resolve(selector, graph, groups) if u in graph.nodes}
+
+
 # ── posture ───────────────────────────────────────────────────────────────
 def eval_not_ingress(inv: Invariant, graph: Graph, ctx: EvalContext) -> list[Violation]:
     spec = inv.not_ingress
     assert spec is not None
     ports = set(spec.ports)
     viols: list[Violation] = []
-    for uid in resolve(spec.select, graph, ctx.groups):
+    for uid in _resolve_nodes(spec.select, graph, ctx.groups):
         for rule in graph.nodes[uid].inbound:
             if spec.from_ not in (rule.get("cidrs") or []):
                 continue
@@ -62,7 +70,7 @@ def eval_property(inv: Invariant, graph: Graph, ctx: EvalContext) -> list[Violat
     spec = inv.property_
     assert spec is not None
     viols: list[Violation] = []
-    for uid in resolve(spec.select, graph, ctx.groups):
+    for uid in _resolve_nodes(spec.select, graph, ctx.groups):
         val = graph.nodes[uid].props.get(spec.field)
         ok = True
         if spec.equals is not None:
@@ -96,7 +104,7 @@ def eval_not_public(inv: Invariant, graph: Graph, ctx: EvalContext) -> list[Viol
             path=facing[uid],
             message=f"{graph.nodes[uid].type} '{_name(graph, uid)}' is reachable from the internet",
         )
-        for uid in resolve(spec.select, graph, ctx.groups)
+        for uid in _resolve_nodes(spec.select, graph, ctx.groups)
         if uid in facing
     ]
 
@@ -105,7 +113,7 @@ def eval_not_in_public_subnet(inv: Invariant, graph: Graph, ctx: EvalContext) ->
     spec = inv.not_in_public_subnet
     assert spec is not None
     viols: list[Violation] = []
-    for uid in resolve(spec.select, graph, ctx.groups):
+    for uid in _resolve_nodes(spec.select, graph, ctx.groups):
         sub = graph.subnet_of.get(uid)
         if sub and sub in graph.public_subnets:
             viols.append(
@@ -185,7 +193,7 @@ def eval_must_have(inv: Invariant, graph: Graph, ctx: EvalContext) -> list[Viola
         neighbors.setdefault(s, set()).add(d)
         neighbors.setdefault(d, set()).add(s)
     viols: list[Violation] = []
-    for uid in resolve(spec.select, graph, ctx.groups):
+    for uid in _resolve_nodes(spec.select, graph, ctx.groups):
         has = any(
             graph.nodes.get(n) and graph.nodes[n].type == spec.has
             for n in neighbors.get(uid, set())
@@ -213,7 +221,7 @@ def eval_no_shared_tgw(inv: Invariant, graph: Graph, ctx: EvalContext) -> list[V
     }
     viols: list[Violation] = []
     with ctx.driver.session() as s:  # type: ignore[attr-defined]
-        for vpc in resolve(spec.select, graph, ctx.groups):
+        for vpc in _resolve_nodes(spec.select, graph, ctx.groups):
             m = re.search(r"vpc-[0-9a-f]+", vpc)
             tgw = attach.get(graph.nodes[vpc].props.get("vpc_id")) or attach.get(
                 m.group(0) if m else None

@@ -82,6 +82,25 @@ invariants:
     assert by_id["other-account"].status == Status.PASS
 
 
+def test_internet_in_posture_select_is_safe(graph):
+    # A not_ingress (security-group) rule pointed at the internet pseudo-selector is
+    # meaningless — it must not crash the run (KeyError '__internet__'); it just
+    # matches nothing and passes.
+    policy = """
+version: 1
+scope: { accounts: ["111111111111"] }
+groups:
+  internet: { pseudo: internet }
+invariants:
+  - id: misconfigured
+    severity: high
+    not_ingress: { select: internet, ports: [22], from: "0.0.0.0/0" }
+"""
+    report = evaluate_policy(load_policy(policy), graph)
+    r = next(x for x in report.results if x.id == "misconfigured")
+    assert r.status == Status.PASS  # not ERROR
+
+
 def test_renderers(graph):
     import json
 
