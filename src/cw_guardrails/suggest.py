@@ -35,7 +35,17 @@ def suggest_rules(
 ) -> list[Candidate]:
     return [
         c
-        for gen in (_admin_ports, _public_db, _sensitive_public, _egress_nat, _shared_tgw)
+        for gen in (
+            _admin_ports,
+            _world_open_ingress,
+            _public_db,
+            _instance_internet,
+            _sensitive_public,
+            _egress_nat,
+            _instances_have_sg,
+            _public_subnet_nacl,
+            _shared_tgw,
+        )
         for c in [gen(graph, driver, account_id)]
         if c is not None
     ]
@@ -55,6 +65,75 @@ def _admin_ports(g: Graph, driver, acct) -> Candidate:
         severity="critical",
         rule_yaml="not_ingress: { select: {type: SecurityGroup}, ports: [22,3389,3306,5432], from: 0.0.0.0/0 }",
         rationale="No security group exposes SSH/RDP/DB ports to the internet today.",
+        violations=bad,
+    )
+
+
+def _world_open_ingress(g: Graph, driver, acct) -> Candidate:
+    bad = []
+    for sg in g.by_type("SecurityGroup"):
+        for r in sg.inbound:
+            if set(r.get("cidrs") or []) & _WORLD:
+                fp, tp = int(r.get("from_port", 0)), int(r.get("to_port", 0))
+                bad.append(f"{sg.name}: {r.get('protocol', 'tcp')}/{fp}-{tp} open to 0.0.0.0/0")
+                break
+    return Candidate(
+        id="no-world-open-ingress",
+        severity="high",
+        rule_yaml="not_ingress: { select: {type: SecurityGroup}, from: 0.0.0.0/0 }",
+        rationale="No security group should expose any port to the entire internet.",
+        violations=bad,
+    )
+
+
+def _instance_internet(g: Graph, driver, acct) -> Candidate | None:
+    insts = g.by_type("Instance")
+    if not insts:
+        return None
+    facing = internet_facing(g)
+    bad = [n.name for n in insts if n.uid in facing]
+    return Candidate(
+        id="instance-not-internet-reachable",
+        severity="high",
+        rule_yaml="not_path: { from: internet, to: {type: Instance} }",
+        rationale=f"{len(insts)} instance(s) exist; lock down which may be reached from the internet.",
+        violations=bad,
+    )
+
+
+def _instances_have_sg(g: Graph, driver, acct) -> Candidate | None:
+    insts = g.by_type("Instance")
+    if not insts:
+        return None
+    bad = [i.name for i in insts if not g.protected_by.get(i.uid)]
+    return Candidate(
+        id="instances-have-security-group",
+        severity="medium",
+        rule_yaml="must_have: { select: {type: Instance}, has: SecurityGroup }",
+        rationale="Every instance should be protected by at least one security group.",
+        violations=bad,
+    )
+
+
+def _public_subnet_nacl(g: Graph, driver, acct) -> Candidate | None:
+    if not g.public_subnets:
+        return None
+    neighbors: dict[str, set[str]] = {}
+    for s, d, _rel in g.edges:
+        neighbors.setdefault(s, set()).add(d)
+        neighbors.setdefault(d, set()).add(s)
+    bad = []
+    for sub in g.public_subnets:
+        has_nacl = any(
+            g.nodes.get(n) and g.nodes[n].type == "NetworkACL" for n in neighbors.get(sub, set())
+        )
+        if not has_nacl:
+            bad.append(g.nodes[sub].name if sub in g.nodes else sub)
+    return Candidate(
+        id="public-subnet-has-nacl",
+        severity="medium",
+        rule_yaml="must_have: { select: {type: Subnet}, has: NetworkACL }",
+        rationale="Internet-routed (public) subnets should have an explicit network ACL.",
         violations=bad,
     )
 

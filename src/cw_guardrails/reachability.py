@@ -105,20 +105,33 @@ def any_reach(
     return None
 
 
+def _igw_for_subnet(graph: Graph, sub: str) -> str | None:
+    """The InternetGateway uid a public subnet routes to (via its route table)."""
+    for s, rt, rel in graph.edges:
+        if rel != "USES_ROUTE_TABLE" or s != sub:
+            continue
+        for s2, d2, rel2 in graph.edges:
+            if rel2 == "ROUTES_TO" and s2 == rt:
+                node = graph.nodes.get(d2)
+                if node and node.type == "InternetGateway":
+                    return d2
+    return None
+
+
 def egress_bypass(
     graph: Graph, src_set: set[str], through_uids: set[str]
 ) -> list[tuple[str, list[str]]]:
     """Resources that egress to the internet without traversing `through` (the NAT case).
 
     A resource in a public (IGW-routed) subnet egresses straight through the IGW —
-    bypassing any required NAT. We report each such resource with its path.
+    bypassing any required NAT. We report each such resource with its path, using the
+    real IGW uid so the evidence path points at actual graph nodes (not a placeholder).
     """
     out: list[tuple[str, list[str]]] = []
-    has_nat = bool(through_uids)
     for uid in src_set:
         sub = graph.subnet_of.get(uid)
         if sub and sub in graph.public_subnets:
-            note = "" if has_nat else " (no NAT gateway present)"
-            out.append((uid, [uid, sub, "igw", INTERNET]))
-            _ = note  # evidence string is composed by the predicate layer
+            igw = _igw_for_subnet(graph, sub)
+            path = [uid, sub, igw, INTERNET] if igw else [uid, sub, INTERNET]
+            out.append((uid, path))
     return out
