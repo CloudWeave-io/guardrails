@@ -1,0 +1,70 @@
+# Weave Guardrails — environment isolation pack (org-wide demo).
+#
+# The org runs two parallel estates discovered in the live graph:
+#   prod: prod-hub (000000000000) + spokes on tgw-1e60596ae00f207af + peer pairs + cross-prod
+#   dev:  dev-hub (988436168215) + spokes on tgw-7f723a7f85f994a13 + peer pairs + cross-dev
+# These rules assert the boundary between them — and the blast-radius basics inside each.
+
+version: 1
+
+groups:
+  internet:       { pseudo: internet }
+  dev_workloads:  { type: [Instance, LambdaFunction], name_matches: "dev-*|cross-dev-*" }
+  prod_workloads: { type: [Instance, LambdaFunction], name_matches: "prod-*|cross-prod-*" }
+
+invariants:
+  # THE headline: dev and prod are separate TGW estates, but a VPC peering
+  # (pcx-823275b89c98d485a) quietly bridges cross-dev-vpc into cross-prod-vpc.
+  - id: prod-dev-isolation
+    description: No dev workload may have a network path to a prod workload.
+    severity: critical
+    accounts: ["000000000000", "219130470859", "327196090792", "413763854993",
+               "416131912498", "509198449604", "556065792163", "654741343482",
+               "698373569963", "844065317290", "884002299052", "988436168215"]
+    not_path: { from: dev_workloads, to: prod_workloads }
+
+  # Port 0 is the scanner's encoding of an all-traffic (protocol -1) rule, so this
+  # catches "allow everything from everywhere" without flagging ordinary 443-to-world.
+  - id: no-allow-all-from-internet
+    description: No security group may allow ALL traffic (every port/protocol) from 0.0.0.0/0.
+    severity: critical
+    accounts: ["556065792163"]
+    not_ingress: { select: { type: SecurityGroup }, ports: [0], from: "0.0.0.0/0" }
+
+  # Green ratchet: prod currently has zero internet-facing workloads — lock it in.
+  - id: prod-zero-internet-exposure
+    description: No prod workload may be inbound-reachable from the internet.
+    severity: critical
+    accounts: ["000000000000", "327196090792", "416131912498",
+               "509198449604", "556065792163", "884002299052"]
+    not_public: { select: prod_workloads }
+
+  - id: dev-zero-internet-exposure
+    description: No dev workload may be inbound-reachable from the internet.
+    severity: high
+    accounts: ["219130470859", "413763854993", "654741343482",
+               "698373569963", "844065317290", "988436168215"]
+    not_public: { select: dev_workloads }
+
+  # Fires on cross-dev-public-igw-VULN and the dev-data-exfil-risk lambda; the
+  # VULN instance is waived below (approved pen-test target), the lambda stays red.
+  - id: risky-workloads-not-in-public-subnet
+    description: Workloads flagged risky (vuln/exfil/risk) must not sit in an internet-routed subnet.
+    severity: high
+    accounts: ["219130470859"]
+    not_in_public_subnet:
+      select: { type: [Instance, LambdaFunction], name_matches: "*vuln*|*exfil*|*risk*" }
+
+  - id: iam-no-public-trust
+    description: No IAM role may have a publicly assumable trust policy.
+    severity: critical
+    accounts: ["000000000000", "219130470859", "327196090792", "413763854993",
+               "416131912498", "509198449604", "556065792163", "654741343482",
+               "698373569963", "844065317290", "884002299052", "988436168215"]
+    property: { select: { type: IamRole }, field: public_trust, equals: false }
+
+waivers:
+  - invariant: risky-workloads-not-in-public-subnet
+    target: { name_matches: "*VULN*" }
+    reason: Approved pen-test target (security exercise), exposure is intentional.
+    expires: 2026-07-01
