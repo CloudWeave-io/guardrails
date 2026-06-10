@@ -154,6 +154,15 @@ def build_indexes(g: Graph) -> None:
     for src, dst, rel in g.edges:
         if rel == "PEERS_WITH" and src in g._vpc_parent and dst in g._vpc_parent:
             _union(g, src, dst)
+    # In the live schema peering is mediated by a VpcPeeringConnection node
+    # (Vpc-[:HAS_PEERING]->pcx-[:PEERS_WITH]->Vpc), so union via its props too.
+    for pcx in g.by_type("VpcPeeringConnection"):
+        if str(pcx.props.get("status", "active")) != "active":
+            continue
+        a = _vpc_uid_for(g, pcx.props.get("requester_vpc_id"))
+        b = _vpc_uid_for(g, pcx.props.get("accepter_vpc_id"))
+        if a and b:
+            _union(g, a, b)
     by_tgw: dict[str, list[str]] = {}
     for att in g.by_type("TgwVpcAttachment"):
         tgw, vid = att.props.get("tgw_id"), att.props.get("vpc_id")
