@@ -4,8 +4,9 @@ Architecture **invariants as code**, verified against the live CloudWeave graph.
 
 You declare the rules your architecture must always satisfy — *"the internet must
 never reach the database", "dev must never reach prod", "no world-open SSH"* — and
-Guardrails checks them against the real, scanned cloud (and, later, against a
-Terraform plan in CI before it merges).
+Guardrails checks them against the real, scanned cloud **and** against a Terraform
+plan in CI before it merges (the [PR gate](action/README.md) — overlays the plan
+on the live graph and fails the PR on anything the change would newly break).
 
 > 📖 **Full documentation:** [`docs/guardrails.md`](docs/guardrails.md) — concepts,
 > CLI, library, platform integration (backend + 🚦 frontend tab), the reachability
@@ -52,6 +53,10 @@ Explicit, expiring exceptions. An expired waiver re-arms the finding.
 # check a policy against the live graph (exit 1 on high/critical failure)
 cw-guardrails check --policy weave.guardrails.yaml -f text|json|sarif
 
+# pre-merge gate: overlay a Terraform plan and fail on NEW violations only
+terraform show -json tf.plan > plan.json
+cw-guardrails check --policy weave.guardrails.yaml --plan plan.json --fail-on new-high
+
 # generate candidate rules from your live cloud (ratchet / fix-first)
 cw-guardrails suggest --account 1234... --region us-east-1
 ```
@@ -81,7 +86,11 @@ src/cw_guardrails/
   engine.py        evaluate_policy + waivers
   suggest.py       generate candidate rules from the live graph
   report.py        text / json / sarif renderers
+  diff.py          baseline-vs-overlay NEW-violation annotation (PR gate)
+  merge.py         hybrid stored + additive repo policy merge (PR gate)
+  overlay/         Terraform-plan → graph-delta overlay (PR gate)
   cli.py / entry.py
+action/            GitHub Action for the PR gate (composite, bash + jq + curl)
 policies/          starter pack + demo policy
 tests/             fixture-based unit tests (no Neo4j needed)
 ```

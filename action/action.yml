@@ -1,0 +1,86 @@
+name: CloudWeave Guardrails PR Gate
+description: >-
+  Overlay a Terraform plan onto the live CloudWeave graph and fail the PR on any
+  architecture invariant the change would newly break.
+author: CloudWeave
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  api-url:
+    description: Base URL of the CloudWeave tenant backend (e.g. https://app.cloudweave.io)
+    required: true
+  api-token:
+    description: A cwt_ machine token with the guardrails:pr-check scope (store in repo secrets)
+    required: true
+  plan-json:
+    description: Path to `terraform show -json <plan>` output
+    required: true
+  repo-policy:
+    description: Optional path to an additive weave.guardrails.yaml in this repo
+    required: false
+    default: ""
+  fail-on:
+    description: "Gate mode: new-high (default) | new-any | all-high"
+    required: false
+    default: new-high
+  comment:
+    description: Post / update a sticky PR comment with the result
+    required: false
+    default: "true"
+  upload-sarif:
+    description: Upload SARIF so findings annotate the PR (needs security-events: write)
+    required: false
+    default: "true"
+
+outputs:
+  gate:
+    description: '"pass" or "fail"'
+    value: ${{ steps.check.outputs.gate }}
+  new-violations:
+    description: Count of violations the plan introduced
+    value: ${{ steps.check.outputs.new_violations }}
+  report-id:
+    description: Stored report id (deep-links into the CloudWeave dashboard)
+    value: ${{ steps.check.outputs.report_id }}
+
+runs:
+  using: composite
+  steps:
+    - name: Evaluate plan against guardrails
+      id: check
+      shell: bash
+      env:
+        CW_API_URL: ${{ inputs.api-url }}
+        CW_API_TOKEN: ${{ inputs.api-token }}
+        CW_PLAN_JSON: ${{ inputs.plan-json }}
+        CW_REPO_POLICY: ${{ inputs.repo-policy }}
+        CW_FAIL_ON: ${{ inputs.fail-on }}
+        CW_PR_NUMBER: ${{ github.event.pull_request.number }}
+        CW_REPO: ${{ github.repository }}
+        CW_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        CW_BRANCH: ${{ github.head_ref || github.ref_name }}
+        CW_PR_URL: ${{ github.event.pull_request.html_url }}
+      run: ${{ github.action_path }}/pr-check.sh
+
+    - name: Upload SARIF
+      if: inputs.upload-sarif == 'true' && hashFiles('guardrails.sarif') != ''
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: guardrails.sarif
+        category: cloudweave-guardrails
+
+    - name: Sticky PR comment
+      if: inputs.comment == 'true' && github.event_name == 'pull_request'
+      uses: marocchino/sticky-pull-request-comment@v2
+      with:
+        header: cloudweave-guardrails
+        path: guardrails-comment.md
+
+    - name: Enforce gate
+      if: steps.check.outputs.gate == 'fail'
+      shell: bash
+      run: |
+        echo "::error::CloudWeave Guardrails: ${{ steps.check.outputs.new_violations }} new violation(s) — see the PR comment."
+        exit 1

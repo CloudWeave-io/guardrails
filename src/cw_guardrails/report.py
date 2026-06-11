@@ -24,12 +24,15 @@ def render_text(report: GuardrailReport) -> str:
         f"  {s['passed']} passed, {s['failed']} failed, {s['waived']} waived "
         f"({s['violations']} violations)\n",
     ]
+    if "new_violations" in s:
+        lines.insert(3, f"  plan overlay: {s['new_violations']} NEW violation(s) vs baseline\n")
     for r in report.results:
         lines.append(f"  [{_ICON[r.status]}] {r.id}  ({r.severity})")
         if r.description:
             lines.append(f"          {r.description}")
         for v in r.violations:
-            lines.append(f"          -> {v.message}")
+            tag = "NEW " if v.new else ""
+            lines.append(f"          -> {tag}{v.message}")
         for v in r.waived:
             lines.append(f"          ~ (waived: {v.waiver_reason}) {v.message}")
         lines.append("")
@@ -55,16 +58,19 @@ def render_sarif(report: GuardrailReport) -> str:
                 }
             )
         for v in r.violations:
-            results.append(
-                {
-                    "ruleId": r.id,
-                    "level": _SARIF_LEVEL[r.severity],
-                    "message": {"text": v.message},
-                    "locations": [
-                        {"logicalLocations": [{"fullyQualifiedName": v.resource or r.id}]}
-                    ],
-                }
-            )
+            # Baseline-diffed reports: NEW violations keep full severity; the
+            # pre-existing ones drop to notes so PR annotations highlight only
+            # what the change introduces.
+            level = _SARIF_LEVEL[r.severity] if v.new is not False else "note"
+            entry = {
+                "ruleId": r.id,
+                "level": level,
+                "message": {"text": ("NEW: " if v.new else "") + v.message},
+                "locations": [{"logicalLocations": [{"fullyQualifiedName": v.resource or r.id}]}],
+            }
+            if v.new is not None:
+                entry["properties"] = {"new": v.new}
+            results.append(entry)
     sarif = {
         "version": "2.1.0",
         "$schema": "https://json.schemastore.org/sarif-2.1.0.json",

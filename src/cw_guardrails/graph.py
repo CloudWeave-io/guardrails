@@ -196,7 +196,12 @@ def subgraph_for_accounts(g: Graph, accounts: set[str]) -> Graph:
     the merged multi-account graph with a post-hoc filter.
     """
     sub = Graph()
-    sub.nodes = {uid: n for uid, n in g.nodes.items() if n.account in accounts}
+    # Planned (Terraform-overlaid) nodes always stay in scope: the account they
+    # will deploy to may be unknowable from the plan, and silently dropping them
+    # from a per-rule subgraph would hide exactly the change being gated.
+    sub.nodes = {
+        uid: n for uid, n in g.nodes.items() if n.account in accounts or n.props.get("planned")
+    }
     keep = set(sub.nodes)
     sub.edges = [(s, d, r) for (s, d, r) in g.edges if s in keep and d in keep]
     build_indexes(sub)

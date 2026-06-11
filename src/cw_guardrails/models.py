@@ -42,6 +42,9 @@ class Violation(BaseModel):
     message: str  # human-readable evidence
     path: list[str] = Field(default_factory=list)  # uids forming the evidence path
     waiver_reason: str | None = None  # set when downgraded by a waiver
+    # PR-gate annotation: True = introduced by the overlaid plan, False = already
+    # present in the baseline, None = not a baseline-diffed evaluation.
+    new: bool | None = None
 
 
 class InvariantResult(BaseModel):
@@ -76,11 +79,32 @@ class GuardrailReport(BaseModel):
         """0 = clean (no high/critical failure); 1 = blocking failure."""
         return 1 if self.worst_failed_rank() >= FAIL_THRESHOLD else 0
 
+    def gate_failed(self, fail_on: str = "new-high") -> bool:
+        """PR-gate verdict over a baseline-diffed report (violations carry `new`).
+
+        - "new-high": any NEW violation on a rule at severity >= high (default)
+        - "new-any":  any NEW violation at all
+        - "all-high": any failing rule at severity >= high, new or not (strict)
+        """
+        if fail_on == "all-high":
+            return self.exit_code() == 1
+        for r in self.results:
+            for v in r.violations:
+                if not v.new:
+                    continue
+                if fail_on == "new-any" or SEV_RANK[r.severity] >= FAIL_THRESHOLD:
+                    return True
+        return False
+
     def summary(self) -> dict[str, int]:
-        return {
+        out = {
             "rules": len(self.results),
             "passed": len(self.passed),
             "failed": len(self.failed),
             "waived": sum(1 for r in self.results if r.status == Status.WAIVED),
             "violations": sum(len(r.violations) for r in self.results),
         }
+        annotated = [v for r in self.results for v in r.violations if v.new is not None]
+        if annotated:
+            out["new_violations"] = sum(1 for v in annotated if v.new)
+        return out
