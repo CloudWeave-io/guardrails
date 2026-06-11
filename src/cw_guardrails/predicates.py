@@ -68,8 +68,7 @@ def eval_not_ingress(inv: Invariant, graph: Graph, ctx: EvalContext) -> list[Vio
             if hit:
                 desc, all_traffic = _ingress_desc(rule)
                 matched = (
-                    f" (matched port{'s' if len(hit) > 1 else ''} "
-                    f"{', '.join(str(p) for p in hit)})"
+                    f" (matched port{'s' if len(hit) > 1 else ''} {', '.join(str(p) for p in hit)})"
                     if ports and not all_traffic
                     else ""
                 )
