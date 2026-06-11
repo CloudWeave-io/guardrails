@@ -42,6 +42,17 @@ def _resolve_nodes(selector: object, graph: Graph, groups: dict) -> set[str]:
     return {u for u in resolve(selector, graph, groups) if u in graph.nodes}
 
 
+def _ingress_desc(rule: dict) -> tuple[str, bool]:
+    """Human description of an inbound rule + whether it is an all-traffic rule.
+    The scanner encodes protocol -1 (all traffic) as port 0-0."""
+    proto = str(rule.get("protocol", "") or "")
+    fp, tp = int(rule.get("from_port", 0)), int(rule.get("to_port", 0))
+    if proto in ("-1", "") or (fp, tp) == (0, 0):
+        return "ALL traffic (every port and protocol)", True
+    span = f"port {fp}" if fp == tp else f"ports {fp}-{tp}"
+    return f"{proto} {span}", False
+
+
 # ── posture ───────────────────────────────────────────────────────────────
 def eval_not_ingress(inv: Invariant, graph: Graph, ctx: EvalContext) -> list[Violation]:
     spec = inv.not_ingress
@@ -53,14 +64,20 @@ def eval_not_ingress(inv: Invariant, graph: Graph, ctx: EvalContext) -> list[Vio
             if spec.from_ not in (rule.get("cidrs") or []):
                 continue
             fp, tp = int(rule.get("from_port", 0)), int(rule.get("to_port", 0))
-            hit = sorted(p for p in ports if fp <= p <= tp) if ports else ["any"]
+            hit = sorted(p for p in ports if fp <= p <= tp) if ports else [-1]
             if hit:
+                desc, all_traffic = _ingress_desc(rule)
+                matched = (
+                    f" (matched port{'s' if len(hit) > 1 else ''} "
+                    f"{', '.join(str(p) for p in hit)})"
+                    if ports and not all_traffic
+                    else ""
+                )
                 viols.append(
                     Violation(
                         resource=uid,
                         name=_name(graph, uid),
-                        message=f"{_name(graph, uid)} allows {rule.get('protocol')}/{fp}-{tp} "
-                        f"from {spec.from_} (port {hit})",
+                        message=f"{_name(graph, uid)} allows {desc} from {spec.from_}{matched}",
                     )
                 )
     return viols
@@ -133,12 +150,19 @@ def eval_not_path(inv: Invariant, graph: Graph, ctx: EvalContext) -> list[Violat
     assert spec is not None
     src_set = resolve(spec.from_, graph, ctx.groups)
     dst_set = resolve(spec.to, graph, ctx.groups)
-    src_desc = "the internet" if INTERNET in src_set else "the source set"
     viols: list[Violation] = []
     for dst in dst_set - {INTERNET}:
         hit = any_reach(graph, src_set, {dst})
         if hit is not None:
-            _s, _d, path = hit
+            src, _d, path = hit
+            # Name the concrete source that reached — that IS the evidence.
+            src_desc = (
+                "the internet"
+                if src == INTERNET
+                else f"{graph.nodes[src].type} '{_name(graph, src)}'"
+                if src in graph.nodes
+                else src
+            )
             viols.append(
                 Violation(
                     resource=dst,
@@ -228,6 +252,9 @@ def eval_no_shared_tgw(inv: Invariant, graph: Graph, ctx: EvalContext) -> list[V
             )
             if not tgw:
                 continue
+            # "Shared with others" means accounts other than the VPC's OWN account —
+            # not the run's first account, which is arbitrary in multi-account policies.
+            own = graph.nodes[vpc].account or ctx.account_id
             others = sorted(
                 {
                     r["a"]
@@ -237,7 +264,7 @@ def eval_no_shared_tgw(inv: Invariant, graph: Graph, ctx: EvalContext) -> list[V
                         t=tgw,
                     )
                 }
-                - {ctx.account_id}
+                - {own}
             )
             if others:
                 viols.append(

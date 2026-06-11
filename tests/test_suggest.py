@@ -37,3 +37,12 @@ def test_suggest_new_generators(graph):
 
     # the public subnet has no NetworkACL neighbor → fix-first
     assert cands["public-subnet-has-nacl"].kind == "fix-first"
+
+
+def test_sensitive_suggestion_is_self_contained(graph):
+    # The rule body must not reference a `sensitive` group the user's policy
+    # may not define — accepting it would create an ERROR rule.
+    cands = {c.id: c for c in suggest_rules(graph)}
+    yaml = cands["sensitive-not-in-public-subnet"].rule_yaml
+    assert "select: sensitive" not in yaml
+    assert "name_matches" in yaml

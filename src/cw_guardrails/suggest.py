@@ -161,7 +161,9 @@ def _sensitive_public(g: Graph, driver, acct) -> Candidate:
     return Candidate(
         id="sensitive-not-in-public-subnet",
         severity="critical",
-        rule_yaml="not_in_public_subnet: { select: sensitive }",
+        # Inline selector — a bare group name here would dangle unless the user's
+        # policy happens to define it, turning the accepted rule into an ERROR.
+        rule_yaml=f'not_in_public_subnet: {{ select: {{ name_matches: "{_SENSITIVE}" }} }}',
         rationale="Sensitive workloads must not sit in an internet-routed subnet.",
         violations=bad,
     )
@@ -207,7 +209,7 @@ def _shared_tgw(g: Graph, driver, acct) -> Candidate | None:
                         t=tgw,
                     )
                 }
-                - {acct}
+                - {vpc.account or acct}
             )
             if others:
                 bad.append(f"{vpc.name} shares {tgw} with {', '.join(others)}")
